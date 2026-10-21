@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Acoustic Architect Web v0.1</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b1020; --panel:#141d33; --line:#2b3b5d; --text:#edf3ff; --muted:#a8b8d6; --accent:#69e0d0; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; font-family:system-ui,-apple-system,Segoe UI,sans-serif; background:radial-gradient(ellipse at top,#17274a,var(--bg) 60%); color:var(--text); }
+  main { width:min(960px,100%); margin:0 auto; padding:28px 18px 44px; }
+  header { margin-bottom:22px; }
+  .eyebrow { color:var(--accent); font-weight:700; letter-spacing:.12em; text-transform:uppercase; font-size:.78rem; }
+  h1 { margin:.25rem 0; font-size:clamp(2rem,5vw,3rem); }
+  .sub { color:var(--muted); margin:0; }
+  .panel { background:rgba(20,29,51,.94); border:1px solid var(--line); border-radius:18px; padding:20px; margin:16px 0; box-shadow:0 14px 38px #0002; }
+  .wave-wrap { background:#080d19; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  canvas { display:block; width:100%; height:260px; }
+  .readouts { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:12px; }
+  .readout { background:#0e172b; border:1px solid var(--line); padding:12px; border-radius:10px; }
+  .readout span { display:block; color:var(--muted); font-size:.8rem; }
+  .readout strong { font-size:1.15rem; }
+  .controls { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  .control { min-width:0; }
+  label { display:flex; justify-content:space-between; gap:12px; font-weight:650; margin-bottom:8px; }
+  output { color:var(--accent); font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; accent-color:var(--accent); cursor:pointer; }
+  .hint { color:var(--muted); font-size:.88rem; margin:.5rem 0 0; }
+  .buttons { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; }
+  button { border:0; border-radius:10px; padding:11px 18px; font:inherit; font-weight:750; cursor:pointer; }
+  button.primary { background:var(--accent); color:#06211f; }
+  button.secondary { background:#243453; color:var(--text); border:1px solid #3b5078; }
+  button:focus-visible,input:focus-visible { outline:3px solid #fff; outline-offset:3px; }
+  #status { color:var(--muted); min-height:1.4em; margin:12px 0 0; }
+  footer { color:var(--muted); text-align:center; font-size:.85rem; margin-top:20px; }
+  @media(max-width:620px) { .controls { grid-template-columns:1fr; } .readouts { grid-template-columns:1fr; } canvas { height:220px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">LearnForge · Audio Lab</div>
+    <h1>Acoustic Architect</h1>
+    <p class="sub">Web v0.1 · Shape a wave, then listen to the tone.</p>
+  </header>
+
+  <section class="panel">
+    <h2>Wave Visualizer</h2>
+    <div class="wave-wrap"><canvas id="wave" aria-label="Animated sine wave visualization"></canvas></div>
+    <div class="readouts">
+      <div class="readout"><span>Amplitude</span><strong id="ampReadout">50%</strong></div>
+      <div class="readout"><span>Frequency</span><strong id="freqReadout">440 Hz</strong></div>
+      <div class="readout"><span>Cycles on screen</span><strong id="cyclesReadout">3</strong></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Build your sound</h2>
+    <div class="controls">
+      <div class="control">
+        <label for="amplitude">Amplitude <output id="ampValue">50%</output></label>
+        <input id="amplitude" type="range" min="0" max="100" value="50" step="1">
+        <p class="hint">Controls the wave's height and the tone's volume.</p>
+      </div>
+      <div class="control">
+        <label for="frequency">Frequency <output id="freqValue">440 Hz</output></label>
+        <input id="frequency" type="range" min="100" max="1000" value="440" step="10">
+        <p class="hint">Controls pitch and the number of visible wave cycles.</p>
+      </div>
+      <div class="control">
+        <label for="speed">Animation speed <output id="speedValue">1.0×</output></label>
+        <input id="speed" type="range" min="0" max="3" value="1" step="0.1">
+        <p class="hint">Controls how quickly the wave travels across the screen.</p>
+      </div>
+    </div>
+    <div class="buttons">
+      <button class="primary" id="play">▶ Play tone</button>
+      <button class="secondary" id="stop" disabled>■ Stop tone</button>
+      <button class="secondary" id="reset">Reset controls</button>
+    </div>
+    <p id="status" role="status">Ready. Press Play tone to enable audio.</p>
+  </section>
+  <footer>Acoustic Architect Web v0.1 · LearnForge</footer>
+</main>
+<script>
+(() => {
+  const canvas = document.getElementById('wave');
+  const ctx = canvas.getContext('2d');
+  const amp = document.getElementById('amplitude');
+  const freq = document.getElementById('frequency');
+  const speed = document.getElementById('speed');
+  const ampValue = document.getElementById('ampValue');
+  const freqValue = document.getElementById('freqValue');
+  const speedValue = document.getElementById('speedValue');
+  const ampReadout = document.getElementById('ampReadout');
+  const freqReadout = document.getElementById('freqReadout');
+  const cyclesReadout = document.getElementById('cyclesReadout');
+  const playButton = document.getElementById('play');
+  const stopButton = document.getElementById('stop');
+  const resetButton = document.getElementById('reset');
+  const status = document.getElementById('status');
+
+  let phase = 0;
+  let lastTime = 0;
+  let audioContext = null;
+  let oscillator = null;
+  let gainNode = null;
+
+  function updateLabels() {
+    ampValue.textContent = `${amp.value}%`;
+    freqValue.textContent = `${freq.value} Hz`;
+    speedValue.textContent = `${Number(speed.value).toFixed(1)}×`;
+    ampReadout.textContent = `${amp.value}%`;
+    freqReadout.textContent = `${freq.value} Hz`;
+    cyclesReadout.textContent = String(Math.max(1, Math.round(Number(freq.value) / 150)));
+    if (oscillator && audioContext) {
+      oscillator.frequency.setTargetAtTime(Number(freq.value), audioContext.currentTime, 0.025);
+      gainNode.gain.setTargetAtTime(Number(amp.value) / 100 * 0.18, audioContext.currentTime, 0.025);
+    }
+  }
+
+  function resizeCanvas() {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function draw(time) {
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width;
+    const h = rect.height;
+    const mid = h / 2;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#080d19';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.strokeStyle = '#1a2944';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= w; x += 32) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    }
+    for (let y = 0; y <= h; y += 32) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+    ctx.strokeStyle = '#405576';
+    ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
+
+    const amplitude = Number(amp.value) / 100 * (h * 0.42);
+    const cycles = Math.max(1, Math.round(Number(freq.value) / 150));
+    const phaseOffset = phase;
+    ctx.beginPath();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#69e0d0';
+    ctx.shadowColor = '#69e0d0';
+    ctx.shadowBlur = 10;
+    for (let x = 0; x <= w; x++) {
+      const y = mid - amplitude * Math.sin((x / w) * cycles * Math.PI * 2 - phaseOffset);
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    const dt = lastTime ? Math.min((time - lastTime) / 1000, 0.05) : 0;
+    lastTime = time;
+    phase += dt * Number(speed.value) * 2.4;
+    requestAnimationFrame(draw);
+  }
+
+  async function startTone() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) {
+        status.textContent = 'This browser does not support Web Audio. Try a current version of Chrome or Edge.';
+        return;
+      }
+      if (!audioContext) {
+        audioContext = new AudioCtx();
+        oscillator = audioContext.createOscillator();
+        gainNode = audioContext.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.value = Number(freq.value);
+        gainNode.gain.value = 0;
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.start();
+      }
+      await audioContext.resume();
+      oscillator.frequency.setTargetAtTime(Number(freq.value), audioContext.currentTime, 0.025);
+      gainNode.gain.setTargetAtTime(Number(amp.value) / 100 * 0.18, audioContext.currentTime, 0.03);
+      playButton.disabled = true;
+      stopButton.disabled = false;
+      status.textContent = 'Tone playing. Adjust the sliders to change the sound.';
+    } catch (error) {
+      status.textContent = 'Audio could not start. Check your browser audio permissions and try again.';
+    }
+  }
+
+  function stopTone() {
+    if (audioContext && gainNode) {
+      gainNode.gain.setTargetAtTime(0, audioContext.currentTime, 0.025);
+    }
+    playButton.disabled = false;
+    stopButton.disabled = true;
+    status.textContent = 'Tone stopped. Your wave controls still work.';
+  }
+
+  [amp, freq, speed].forEach(el => el.addEventListener('input', updateLabels));
+  playButton.addEventListener('click', startTone);
+  stopButton.addEventListener('click', stopTone);
+  resetButton.addEventListener('click', () => {
+    amp.value = 50; freq.value = 440; speed.value = 1;
+    phase = 0;
+    updateLabels();
+    status.textContent = 'Controls reset to their starting values.';
+  });
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+  updateLabels();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
